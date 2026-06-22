@@ -1,6 +1,6 @@
 <div align="center">
 
-![Synapse AI Logo](./ai-ml/docs/logo.svg)
+![Synapse Logo](./ai-ml/docs/logo.svg)
 
 </div>
 
@@ -11,101 +11,114 @@
 [![Ruff](https://img.shields.io/badge/code%20style-ruff-000000?style=for-the-badge)](https://github.com/astral-sh/ruff)
 [![Checked with black](https://img.shields.io/badge/code%20style-black-000000?style=for-the-badge)](https://github.com/psf/black)
 
+<br>
+
+**Intelligent decision capture for your Slack workspace.**
+
 </div>
 
-# Synapse AI/ML Module
+---
 
-Self-contained AI module for the Synapse Slack agent. Provides:
+## Overview
 
-- **Retrieval-augmented Q&A** — answer questions from a local vector store, with
-  cited sources.
-- **Decision detection** — classify short conversation transcripts as containing
-  a decision or not.
-- **Web search fallback** — when the local store lacks relevant information, fall
-  back to Brave Search.
+Synapse is a Slack-native AI agent that lives in your workspace and listens
+for decisions being made. When a team conversation reaches a conclusion —
+a deployment date, a tech choice, a process change — Synapse captures it,
+stores it, and makes it retrievable later through natural-language questions.
+
+The project is split into two self-contained packages:
+
+| Package | Role |
+|---|---|
+| [`ai-ml/`](./ai-ml) | Core AI/ML engine: RAG pipeline, web search, decision classifier, local vector store. Zero Slack coupling — could serve any chat interface. |
+| [`backend/`](./backend) | Slack Bolt application: event handlers, Block Kit views, service wrappers. Wires the AI engine into Slack and extends it with real-time data sources. |
+
+---
+
+## How it works
+
+1. **A decision is made** — a team member says something like *"Let's go with
+   option A and deploy on Friday"* in a Slack channel.
+2. **Synapse detects it** — the real-time decision classifier analyses the
+   transcript and flags it as a decision, extracting a summary and confidence
+   score.
+3. **It's stored** — the decision is indexed in a local vector store (NumPy,
+   no external infrastructure needed).
+4. **Anyone asks** — another team member @mentions Synapse: *"What did we
+   decide about deployment?"* — the RAG pipeline retrieves the most relevant
+   chunks and synthesises an answer with cited sources.
+5. **Fallback to the web** — if the vector store doesn't have enough context,
+   Synapse supplements with Brave Search results or, in future, connected
+   data sources (Google Drive, GitHub, Slack history).
+
+---
+
+## Repository structure
+
+```
+synapse/
+├── ai-ml/                 # AI/ML engine — run & test independently
+│   ├── src/synapse_ai/
+│   ├── tests/
+│   ├── pyproject.toml
+│   └── README.md          # Setup, CLI usage, configuration
+├── backend/               # Slack bot — run & test independently
+│   ├── src/synapse_backend/
+│   ├── tests/
+│   ├── pyproject.toml
+│   └── README.md          # Setup, Slack App config, running
+└── README.md              # This file
+```
+
+---
 
 ## Quick start
 
 ```bash
+# 1. AI/ML module — seed the vector store and test the engine
 cd ai-ml
-python -m venv .venv
-.venv\Scripts\activate   # Windows
 pip install -e ".[dev]"
-cp .env.example .env     # fill in your API keys
-pytest
-```
-
-## CLI
-
-```bash
-# Seed the vector store with sample documents
+cp .env.example .env       # fill in OPENAI_API_KEY and BRAVE_API_KEY
+pytest                     # 48 tests should pass
 python -m synapse_ai.cli seed
+python -m synapse_ai.cli ask "What is our deployment policy?"
 
-# Ask a question (uses vector store + optional web fallback)
-python -m synapse_ai.cli ask "What is the team's deployment policy?"
+# 2. Backend — run the Slack bot
+cd ../backend
+pip install -e ../ai-ml
+pip install -e ".[dev]"
+cp .env.example .env       # fill in Slack tokens
+pytest                     # 11 tests should pass
+python -m synapse_backend.app
 ```
 
-## Project structure
+---
 
-```
-ai-ml/
-├── src/synapse_ai/
-│   ├── clients/             # OpenAI & Brave Search wrappers
-│   │   ├── openai_client.py
-│   │   └── brave_search_client.py
-│   ├── vectorstore/         # NumPy-backed local vector store (no Rust deps)
-│   │   └── store.py         # VectorStore, Document, ScoredChunk
-│   ├── retrieval/           # Retrieval pipeline
-│   │   └── retriever.py     # Retriever (embed + query)
-│   ├── agent/               # Decision classifier & orchestrator
-│   │   ├── decision_classifier.py  # DecisionClassifier, DecisionSignal
-│   │   └── orchestrator.py         # Orchestrator, AnswerResult
-│   ├── config.py            # Settings from environment (pydantic-settings)
-│   └── cli.py               # CLI entry point
-├── tests/
-│   ├── fixtures/
-│   │   └── sample_docs.json # 8 sample documents for seeding
-│   ├── conftest.py
-│   ├── test_config.py
-│   ├── test_openai_client.py
-│   ├── test_brave_search_client.py
-│   ├── test_vectorstore.py
-│   ├── test_retriever.py
-│   ├── test_decision_classifier.py
-│   └── test_orchestrator.py
-├── pyproject.toml
-└── README.md
-```
+## Envisioned capabilities
 
-## Architecture
-
-```
-User question
-     │
-     v
-  Orchestrator ──> Retriever ──> VectorStore (NumPy)
-     │                │                │
-     │                v                v
-     │          embed via          index.json +
-     │         OpenAI API          vectors.npy
-     │
-     ├── confidence >= 0.70 ──> vector-store only answer
-     ├── confidence >= 0.35 ──> vector + Brave Search
-     └── confidence <  0.35 ──> Brave Search / "I don't know"
-
-Decision detection runs in parallel on raw transcripts
-via DecisionClassifier → DecisionSignal(is_decision, summary, confidence)
-```
-
-## Configuration
-
-| Variable | Required | Description |
+| Area | Current | Planned |
 |---|---|---|
-| `OPENAI_API_KEY` | Yes | OpenAI API key |
-| `BRAVE_API_KEY` | Yes | Brave Search API key |
-| `VECTOR_STORE_DIR` | No | Path for persistent index (default: `./vector_store_data`) |
+| **Q&A source** | Local vector store + Brave Search | + Google Drive, GitHub, Slack history |
+| **Decision capture** | On-demand via transcript | Automatic channel watching, threaded summaries |
+| **App Home** | Placeholder | Dashboard of recent decisions, search bar, trend chart |
+| **Knowledge base** | Manual `seed` command | Auto-indexing from connected data sources |
+| **MCP integration** | — | Connect to MCP servers for structured tool use |
+| **Team awareness** | — | Per-team vector stores, channel scoped decisions |
 
-## Environment
+---
 
-- Python 3.11+ (developed/tested on 3.14)
-- Pure Python dependencies only (no Rust-native extensions)
+## Technology
+
+- **Python 3.11+** (developed and tested on 3.14)
+- **Slack Bolt** — Socket Mode (no public URL needed)
+- **OpenAI** — embeddings (`text-embedding-3-small`) and chat completions (`gpt-4o-mini`)
+- **Brave Search API** — web search fallback
+- **NumPy** — pure-Python vector store (no Rust-native extensions)
+- **pydantic-settings** — typed environment configuration
+- **pytest** — full test coverage with mocked network calls
+
+---
+
+## License
+
+MIT
