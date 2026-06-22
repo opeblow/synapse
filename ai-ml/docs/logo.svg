@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 140" width="400" height="140">
+  <defs>
+    <linearGradient id="gradPurple" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+    <linearGradient id="gradCyan" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="gradSynapse" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="50%" stop-color="#f472b6"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="glowStrong">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Left neuron: dendrites -->
+  <g stroke="url(#gradPurple)" stroke-width="2.5" stroke-linecap="round" fill="none">
+    <line x1="55" y1="55" x2="75" y2="65"/>
+    <line x1="70" y1="45" x2="75" y2="65"/>
+    <line x1="55" y1="75" x2="75" y2="65"/>
+    <line x1="65" y1="85" x2="75" y2="65"/>
+    <line x1="45" y1="48" x2="75" y2="65"/>
+    <line x1="50" y1="82" x2="75" y2="65"/>
+    <line x1="40" y1="65" x2="75" y2="65"/>
+  </g>
+
+  <!-- Left neuron: soma (cell body) -->
+  <circle cx="75" cy="65" r="14" fill="url(#gradPurple)" opacity="0.9"/>
+  <circle cx="75" cy="65" r="10" fill="none" stroke="#c4b5fd" stroke-width="1" opacity="0.6"/>
+  <circle cx="75" cy="65" r="5" fill="#c4b5fd" opacity="0.4"/>
+
+  <!-- Synaptic gap: energy bolts -->
+  <g filter="url(#glowStrong)">
+    <line x1="89" y1="62" x2="101" y2="58" stroke="url(#gradSynapse)" stroke-width="2" stroke-linecap="round">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="1.5s" repeatCount="indefinite"/>
+    </line>
+    <line x1="89" y1="65" x2="101" y2="68" stroke="url(#gradSynapse)" stroke-width="2.5" stroke-linecap="round">
+      <animate attributeName="opacity" values="1;0.3;1" dur="1.8s" repeatCount="indefinite"/>
+    </line>
+    <line x1="89" y1="68" x2="101" y2="72" stroke="url(#gradSynapse)" stroke-width="1.5" stroke-linecap="round">
+      <animate attributeName="opacity" values="0.5;1;0.5" dur="1.2s" repeatCount="indefinite"/>
+    </line>
+  </g>
+
+  <!-- Synaptic gap: spark dots -->
+  <circle cx="93" cy="60" r="1.5" fill="#f472b6" filter="url(#glow)">
+    <animate attributeName="opacity" values="0;1;0" dur="1s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="96" cy="70" r="1.5" fill="#22d3ee" filter="url(#glow)">
+    <animate attributeName="opacity" values="1;0;1" dur="1.3s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="98" cy="63" r="1" fill="#a78bfa" filter="url(#glow)">
+    <animate attributeName="opacity" values="0.5;1;0.5" dur="0.9s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Right neuron: axon terminals -->
+  <g stroke="url(#gradCyan)" stroke-width="2.5" stroke-linecap="round" fill="none">
+    <line x1="105" y1="65" x2="125" y2="55"/>
+    <line x1="105" y1="65" x2="125" y2="65"/>
+    <line x1="105" y1="65" x2="125" y2="75"/>
+    <line x1="105" y1="65" x2="120" y2="85"/>
+    <line x1="105" y1="65" x2="120" y2="45"/>
+    <line x1="105" y1="65" x2="130" y2="60"/>
+  </g>
+
+  <!-- Right neuron: boutons (synaptic knobs) -->
+  <circle cx="125" cy="55" r="3" fill="url(#gradCyan)" opacity="0.85"/>
+  <circle cx="125" cy="65" r="3" fill="url(#gradCyan)" opacity="0.85"/>
+  <circle cx="125" cy="75" r="3" fill="url(#gradCyan)" opacity="0.85"/>
+  <circle cx="120" cy="85" r="2.5" fill="url(#gradCyan)" opacity="0.85"/>
+  <circle cx="120" cy="45" r="2.5" fill="url(#gradCyan)" opacity="0.85"/>
+  <circle cx="130" cy="60" r="2.5" fill="url(#gradCyan)" opacity="0.85"/>
+
+  <!-- Right neuron: soma -->
+  <circle cx="105" cy="65" r="14" fill="url(#gradCyan)" opacity="0.9"/>
+  <circle cx="105" cy="65" r="10" fill="none" stroke="#67e8f9" stroke-width="1" opacity="0.6"/>
+  <circle cx="105" cy="65" r="5" fill="#67e8f9" opacity="0.4"/>
+
+  <!-- Decorative circuit traces -->
+  <g stroke="#312e81" stroke-width="1" opacity="0.25" fill="none">
+    <rect x="25" y="32" width="120" height="66" rx="8"/>
+    <line x1="25" y1="98" x2="38" y2="98"/>
+    <line x1="132" y1="32" x2="145" y2="32"/>
+  </g>
+
+  <!-- Text -->
+  <text x="170" y="62" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="28" font-weight="700" fill="#1e1b4b" letter-spacing="0.5">Synapse</text>
+  <text x="170" y="88" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="28" font-weight="300" fill="url(#gradCyan)" letter-spacing="1">AI</text>
+
+  <!-- Tagline -->
+  <text x="170" y="108" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10" font-weight="500" fill="#94a3b8" letter-spacing="2">RETRIEVAL · DECISIONS · AUTOMATION</text>
+
+  <!-- Animated pulse ring on left neuron -->
+  <circle cx="75" cy="65" r="14" fill="none" stroke="#7c3aed" stroke-width="1" opacity="0">
+    <animate attributeName="r" values="14;22" dur="2s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.6;0" dur="2s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Animated pulse ring on right neuron -->
+  <circle cx="105" cy="65" r="14" fill="none" stroke="#06b6d4" stroke-width="1" opacity="0">
+    <animate attributeName="r" values="14;22" dur="2s" repeatCount="indefinite" begin="1s"/>
+    <animate attributeName="opacity" values="0.6;0" dur="2s" repeatCount="indefinite" begin="1s"/>
+  </circle>
+</svg>
