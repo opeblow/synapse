@@ -1,0 +1,1 @@
+"""Synapse backend — Slack Bolt application with AI/ML integration."""
