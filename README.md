@@ -1,6 +1,6 @@
 <div align="center">
 
-![Synapse AI Logo](./docs/logo.svg)
+![Synapse AI Logo](./ai-ml/docs/logo.svg)
 
 </div>
 
