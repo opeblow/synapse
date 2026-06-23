@@ -41,4 +41,7 @@ def test_settings_defaults(monkeypatch):
     assert s.openai_max_retries == 3
     assert s.brave_search_timeout_seconds == 15
     assert s.brave_search_max_retries == 2
-    assert s.chroma_persist_directory == "./chroma_data"
+    from pathlib import Path
+
+    expected = str(Path(__file__).resolve().parent.parent / "chroma_data")
+    assert s.chroma_persist_directory == expected

@@ -47,14 +47,14 @@ class TestSettingsValidation:
     def test_missing_bot_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
         with pytest.raises(ValueError, match="slack_bot_token"):
-            Settings()
+            Settings(_env_file=None)
 
     def test_missing_app_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("SLACK_APP_TOKEN", raising=False)
         with pytest.raises(ValueError, match="slack_app_token"):
-            Settings()
+            Settings(_env_file=None)
 
     def test_missing_signing_secret_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("SLACK_SIGNING_SECRET", raising=False)
         with pytest.raises(ValueError, match="slack_signing_secret"):
-            Settings()
+            Settings(_env_file=None)

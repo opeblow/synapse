@@ -16,6 +16,9 @@ env/
 # Environment
 .env
 
+# Development helpers
+list_channels.py
+
 # OS
 Thumbs.db
 .DS_Store

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -13,9 +15,10 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=Path(__file__).resolve().parent.parent.parent / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        env_prefix="",
     )
 
     slack_bot_token: str = Field(min_length=1, description="Bot User OAuth token (xoxb-...)")
@@ -25,6 +28,16 @@ class Settings(BaseSettings):
     slack_signing_secret: str = Field(min_length=1, description="Signing secret from Basic Information")
 
     slack_bot_user_id: str = Field(default="", description="Bot user ID, populated after startup")
+
+    slack_decisions_channel_id: str = Field(
+        default="",
+        description="Channel ID (e.g. C123ABC) where Decision Cards are posted",
+    )
+
+    github_token: str = Field(
+        default="",
+        description="GitHub personal access token for repository search",
+    )
 
     log_level: str = Field(default="INFO", description="Logging level (DEBUG, INFO, WARNING, etc.)")
 

@@ -6,8 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from synapse_ai.agent.orchestrator import AnswerResult, Orchestrator
+from synapse_ai.agent.orchestrator import AnswerResult, Orchestrator, Source
 from synapse_ai.clients.brave_search_client import SearchResult
+from synapse_ai.config import settings
 from synapse_ai.vectorstore.store import ScoredChunk
 
 # ------------------------------------------------------------------
@@ -17,12 +18,24 @@ from synapse_ai.vectorstore.store import ScoredChunk
 
 @pytest.fixture
 def mock_components():
-    """Return an Orchestrator with all dependencies mocked."""
+    """Return an Orchestrator with all dependencies mocked.
+
+    Yields ``(orchestrator, retriever, brave, llm, github)``.
+    The ``github`` mock is a ``MagicMock`` that will never be called
+    unless a test explicitly sets it up (``github_repo`` is empty at
+    the module level by default).
+    """
     retriever = MagicMock()
     brave = MagicMock()
     llm = MagicMock()
-    orch = Orchestrator(retriever=retriever, brave_client=brave, openai_client=llm)
-    return orch, retriever, brave, llm
+    github = MagicMock()
+    orch = Orchestrator(
+        retriever=retriever,
+        brave_client=brave,
+        openai_client=llm,
+        github_client=github,
+    )
+    return orch, retriever, brave, llm, github
 
 
 def _chunk(text: str, score: float, metadata: dict | None = None) -> ScoredChunk:
@@ -41,7 +54,7 @@ def _chunk(text: str, score: float, metadata: dict | None = None) -> ScoredChunk
 
 def test_retrieval_only_path(mock_components):
     """Top vector score >= 0.70 → answer from vector store, no web call."""
-    orch, retriever, brave, llm = mock_components
+    orch, retriever, brave, llm, _ = mock_components
     retriever.retrieve.return_value = [
         _chunk("Deploy on Friday", 0.92, {"source": "policy.md"}),
         _chunk("Use CI pipeline", 0.85),
@@ -68,7 +81,7 @@ def test_retrieval_only_path(mock_components):
 
 def test_fallback_to_web_search(mock_components):
     """Top vector score < 0.70 but >= 0.35 → merge vector + web results."""
-    orch, retriever, brave, llm = mock_components
+    orch, retriever, brave, llm, _ = mock_components
     retriever.retrieve.return_value = [
         _chunk("Somewhat relevant", 0.45, {"source": "internal"}),
     ]
@@ -86,7 +99,7 @@ def test_fallback_to_web_search(mock_components):
 
 def test_web_search_error_is_graceful(mock_components):
     """If Brave search raises, orchestrator should still return vector results."""
-    orch, retriever, brave, llm = mock_components
+    orch, retriever, brave, llm, _ = mock_components
     retriever.retrieve.return_value = [
         _chunk("Internal note about policy", 0.50),
     ]
@@ -107,7 +120,7 @@ def test_web_search_error_is_graceful(mock_components):
 
 def test_no_good_match_no_vector_results(mock_components):
     """No vector results and no web results → 'I don't know' answer."""
-    orch, retriever, brave, llm = mock_components
+    orch, retriever, brave, llm, _ = mock_components
     retriever.retrieve.return_value = []
     brave.search.return_value = []
 
@@ -120,7 +133,7 @@ def test_no_good_match_no_vector_results(mock_components):
 
 def test_no_good_match_low_vector_score_no_web(mock_components):
     """Low vector score (< 0.35) and no web results → 'I don't know'."""
-    orch, retriever, brave, llm = mock_components
+    orch, retriever, brave, llm, _ = mock_components
     retriever.retrieve.return_value = [
         _chunk("Unrelated text", 0.10),
     ]
@@ -140,8 +153,8 @@ def test_no_good_match_low_vector_score_no_web(mock_components):
 
 
 def test_decision_detection_with_transcript(mock_components):
-    """When a transcript is provided, decision_detected is set."""
-    orch, retriever, brave, llm = mock_components
+    """When a transcript is provided, decision_signal is populated."""
+    orch, retriever, brave, llm, _ = mock_components
     retriever.retrieve.return_value = [
         _chunk("Relevant info", 0.80),
     ]
@@ -153,11 +166,15 @@ def test_decision_detection_with_transcript(mock_components):
     result = orch.answer("deploy?", conversation_transcript="A: deploy friday?\nB: yes")
 
     assert result.decision_detected is True
+    assert result.decision_signal is not None
+    assert result.decision_signal.is_decision is True
+    assert result.decision_signal.summary == "Deploy Friday"
+    assert result.decision_signal.confidence == 0.9
 
 
 def test_decision_detection_no_transcript(mock_components):
-    """Without a transcript, decision_detected defaults to False."""
-    orch, retriever, brave, llm = mock_components
+    """Without a transcript, decision_signal is None."""
+    orch, retriever, brave, llm, _ = mock_components
     retriever.retrieve.return_value = [
         _chunk("Info", 0.80),
     ]
@@ -166,6 +183,7 @@ def test_decision_detection_no_transcript(mock_components):
     result = orch.answer("question", conversation_transcript=None)
 
     assert result.decision_detected is False
+    assert result.decision_signal is None
 
 
 # ------------------------------------------------------------------
@@ -175,7 +193,7 @@ def test_decision_detection_no_transcript(mock_components):
 
 def test_sources_deduplicated_by_url(mock_components):
     """When the same URL appears in vector metadata and web results, deduplicate."""
-    orch, retriever, brave, llm = mock_components
+    orch, retriever, brave, llm, _ = mock_components
     retriever.retrieve.return_value = [
         _chunk(
             "Internal doc",
@@ -193,3 +211,90 @@ def test_sources_deduplicated_by_url(mock_components):
     # Only one source for the duplicate URL
     urls = [s.url for s in result.sources]
     assert urls.count("https://example.com/doc") == 1
+
+
+# ------------------------------------------------------------------
+# Tests: GitHub search integration
+# ------------------------------------------------------------------
+
+
+def test_github_results_merged_with_brave(monkeypatch):
+    """GitHub results appear alongside Brave results when both return data."""
+    monkeypatch.setattr(settings, "github_repo", "test/repo")
+    retriever = MagicMock()
+    brave = MagicMock()
+    llm = MagicMock()
+    github = MagicMock()
+    orch = Orchestrator(
+        retriever=retriever, brave_client=brave, openai_client=llm, github_client=github
+    )
+
+    retriever.retrieve.return_value = [_chunk("medium relevant", 0.45)]
+    brave.search.return_value = [
+        SearchResult(title="Brave Hit", url="https://brave.example.com", snippet="Brave snippet"),
+    ]
+    github.search.return_value = [
+        Source(title="org/repo: file.py", url="https://github.com/org/repo/file.py", snippet="def foo"),
+    ]
+    llm.complete.return_value = "Answer."
+
+    result = orch.answer("test query")
+
+    assert len(result.sources) == 3  # vector + Brave + GitHub
+    urls = [s.url for s in result.sources]
+    assert "https://brave.example.com" in urls
+    assert "https://github.com/org/repo/file.py" in urls
+    brave.search.assert_called_once()
+    github.search.assert_called_once()
+
+
+def test_github_empty_brave_still_works(monkeypatch):
+    """When GitHub returns nothing, Brave-only answer is unaffected."""
+    monkeypatch.setattr(settings, "github_repo", "test/repo")
+    retriever = MagicMock()
+    brave = MagicMock()
+    llm = MagicMock()
+    github = MagicMock()
+    orch = Orchestrator(
+        retriever=retriever, brave_client=brave, openai_client=llm, github_client=github
+    )
+
+    retriever.retrieve.return_value = [_chunk("medium relevant", 0.45)]
+    brave.search.return_value = [
+        SearchResult(title="Brave Hit", url="https://brave.example.com", snippet="Brave snippet"),
+    ]
+    github.search.return_value = []
+    llm.complete.return_value = "Answer."
+
+    result = orch.answer("test query")
+
+    assert len(result.sources) == 2  # vector + Brave
+    assert result.sources[1].url == "https://brave.example.com"
+    brave.search.assert_called_once()
+    github.search.assert_called_once()
+
+
+def test_github_exception_brave_still_works(monkeypatch):
+    """When GitHub search raises, Brave results are still returned."""
+    monkeypatch.setattr(settings, "github_repo", "test/repo")
+    retriever = MagicMock()
+    brave = MagicMock()
+    llm = MagicMock()
+    github = MagicMock()
+    orch = Orchestrator(
+        retriever=retriever, brave_client=brave, openai_client=llm, github_client=github
+    )
+
+    retriever.retrieve.return_value = [_chunk("medium relevant", 0.45)]
+    brave.search.return_value = [
+        SearchResult(title="Brave Hit", url="https://brave.example.com", snippet="Brave snippet"),
+    ]
+    github.search.side_effect = Exception("GitHub API down")
+    llm.complete.return_value = "Answer."
+
+    result = orch.answer("test query")
+
+    assert len(result.sources) == 2  # vector + Brave, no GitHub
+    assert result.sources[1].url == "https://brave.example.com"
+    brave.search.assert_called_once()
+    github.search.assert_called_once()

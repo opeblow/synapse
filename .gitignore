@@ -22,3 +22,8 @@ vector_store_data/
 # OS
 Thumbs.db
 .DS_Store
+
+# Bot runtime artifacts
+bot_output.log
+bot_pid.txt
+synapse_app.err

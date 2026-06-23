@@ -10,8 +10,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from synapse_ai.agent.decision_classifier import DecisionSignal
 from synapse_ai.clients.brave_search_client import BraveSearchClient, SearchResult
 from synapse_ai.clients.openai_client import OpenAIClient
+from synapse_ai.config import settings
 from synapse_ai.retrieval.retriever import Retriever
 from synapse_ai.vectorstore.store import ScoredChunk
 
@@ -52,6 +54,7 @@ class AnswerResult:
     confidence: str  # "high", "medium", or "low"
     sources: list[Source] = field(default_factory=list)
     decision_detected: bool = False
+    decision_signal: DecisionSignal | None = None
 
 
 class Orchestrator:
@@ -68,11 +71,14 @@ class Orchestrator:
         retriever: Retriever | None = None,
         brave_client: BraveSearchClient | None = None,
         openai_client: OpenAIClient | None = None,
+        github_client: Any = None,
     ) -> None:
         """Initialise with optional pre-configured dependencies."""
         self._retriever = retriever or Retriever()
         self._brave = brave_client or BraveSearchClient()
         self._llm = openai_client or OpenAIClient()
+        self._github = github_client
+        self._github_repo = settings.github_repo
 
     # ------------------------------------------------------------------
     # Public API
@@ -94,7 +100,11 @@ class Orchestrator:
         3. If the top chunk scores above **0.35**, also fetch web
            results and merge both sources (medium confidence).
         4. Otherwise fall back to web search only.
-        5. If no relevant sources are found at all, return a
+        5. When a ``github_client`` is configured and vector scores are
+           below the high-confidence threshold, also search GitHub code
+           and merge results (after Brave, so a slow/empty GitHub
+           response never blocks the primary fallback).
+        6. If no relevant sources are found at all, return a
            "I don't know" answer (low confidence).
 
         Args:
@@ -122,24 +132,26 @@ class Orchestrator:
         sources, context_text = self._gather_sources(question, vector_chunks, best_score)
 
         if not sources:
-            decision = self._detect_decision(conversation_transcript)
+            signal = self._detect_decision(conversation_transcript)
             return AnswerResult(
                 answer_markdown=NO_ANSWER_MESSAGE,
                 confidence="low",
                 sources=[],
-                decision_detected=decision,
+                decision_detected=signal.is_decision if signal else False,
+                decision_signal=signal,
             )
 
         # Synthesise answer from context
         confidence = self._confidence_label(best_score, bool(vector_chunks))
         answer = self._synthesise(question, context_text, **llm_kwargs)
-        decision = self._detect_decision(conversation_transcript)
+        signal = self._detect_decision(conversation_transcript)
 
         return AnswerResult(
             answer_markdown=answer,
             confidence=confidence,
             sources=sources,
-            decision_detected=decision,
+            decision_detected=signal.is_decision if signal else False,
+            decision_signal=signal,
         )
 
     # ------------------------------------------------------------------
@@ -185,6 +197,25 @@ class Orchestrator:
                 context_parts.append(f"[{idx}] {result.title} ({result.url})\n{result.snippet}")
                 idx += 1
 
+            # Supplement with GitHub code search (after Brave so it never blocks)
+            if self._github is not None and self._github_repo:
+                try:
+                    gh_results: list[Source] = self._github.search(
+                        question, repo=self._github_repo, per_page=5
+                    )
+                except Exception:
+                    logger.warning("GitHub search failed, continuing without it")
+                    gh_results = []
+
+                for result in gh_results:
+                    if any(s.url == result.url for s in sources):
+                        continue
+                    sources.append(result)
+                    title = result.title
+                    snippet = result.snippet or "(no snippet)"
+                    context_parts.append(f"[{idx}] {title}\n{snippet}")
+                    idx += 1
+
         if not sources:
             return [], ""
 
@@ -201,19 +232,18 @@ class Orchestrator:
         ]
         return self._llm.complete(messages, **llm_kwargs)
 
-    def _detect_decision(self, transcript: str | None) -> bool:
+    def _detect_decision(self, transcript: str | None) -> DecisionSignal | None:
         """Optionally run decision detection on a conversation transcript."""
         if not transcript:
-            return False
+            return None
         try:
             from synapse_ai.agent.decision_classifier import DecisionClassifier
 
             classifier = DecisionClassifier(client=self._llm)
-            signal = classifier.analyse(transcript)
-            return signal.is_decision
+            return classifier.analyse(transcript)
         except Exception:
             logger.warning("Decision detection failed, skipping", exc_info=True)
-            return False
+            return None
 
     @staticmethod
     def _confidence_label(best_score: float, has_vector_results: bool) -> str:

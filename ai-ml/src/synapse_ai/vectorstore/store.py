@@ -16,6 +16,8 @@ from typing import Callable
 
 import numpy as np
 
+from synapse_ai.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,10 +60,12 @@ class VectorStore:
     def __init__(
         self,
         embed_fn: Callable[[list[str]], list[list[float]]],
-        persist_directory: str = "./chroma_data",
+        persist_directory: str | None = None,
         collection_name: str = "synapse_docs",
     ) -> None:
         """Initialise the store with an embedding function and persist path."""
+        if persist_directory is None:
+            persist_directory = settings.chroma_persist_directory
         self._embed_fn = embed_fn
         self._collection_name = collection_name
         self._path = Path(persist_directory) / collection_name

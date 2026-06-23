@@ -20,11 +20,21 @@ expected and intentional.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load ai-ml/.env before any synapse_ai modules are imported so the
+# environment is populated regardless of CWD when the CLI is invoked.
+_AI_ML_ROOT = Path(__file__).resolve().parent.parent.parent
+_ENV_FILE = _AI_ML_ROOT / ".env"
+if _ENV_FILE.is_file():
+    load_dotenv(_ENV_FILE)
+
 import argparse
 import json
 import logging
 import sys
-from pathlib import Path
 
 from synapse_ai.agent.orchestrator import Orchestrator
 from synapse_ai.clients.openai_client import OpenAIClient
@@ -104,8 +114,10 @@ def cmd_ask(args: argparse.Namespace) -> None:
         print()
 
     # Print decision detection
-    if result.decision_detected:
-        print("[DECISION DETECTED] Decision detected in conversation.")
+    signal = result.decision_signal
+    if signal and signal.is_decision:
+        summary = signal.summary or "(no summary)"
+        print(f"[DECISION DETECTED] {summary} (confidence: {signal.confidence:.0%})")
     else:
         print("[NO DECISION] No decision detected.")
 
