@@ -29,6 +29,8 @@ class Settings(BaseSettings):
 
     slack_bot_user_id: str = Field(default="", description="Bot user ID, populated after startup")
 
+    slack_user_token: str = Field(default="", description="User OAuth token (xoxp-...) for Slack RTS search")
+
     slack_decisions_channel_id: str = Field(
         default="",
         description="Channel ID (e.g. C123ABC) where Decision Cards are posted",

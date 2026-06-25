@@ -13,7 +13,7 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -e ".[dev]"
 cp .env.example .env       # fill in your API keys
-pytest                     # 48 tests (3 skipped: live integration)
+pytest                     # 54 passed, 3 skipped (live)
 ```
 
 ## Configuration
@@ -22,6 +22,8 @@ pytest                     # 48 tests (3 skipped: live integration)
 |---|---|---|
 | `OPENAI_API_KEY` | Yes | OpenAI API key |
 | `BRAVE_API_KEY` | Yes | Brave Search API key |
+| `GITHUB_TOKEN` | No | GitHub PAT (for code search; also typically set by `backend/.env`) |
+| `GITHUB_REPO` | No | `owner/repo` string (e.g. `opeblow/synapse`) |
 | `VECTOR_STORE_DIR` | No | Persist path (default: `./vector_store_data`) |
 
 ## CLI
@@ -30,7 +32,7 @@ pytest                     # 48 tests (3 skipped: live integration)
 # Seed the vector store with sample documents
 python -m synapse_ai.cli seed
 
-# Ask a question (vector store + optional web fallback)
+# Ask a question (vector store + optional web + GitHub fallback)
 python -m synapse_ai.cli ask "What is the team's deployment policy?"
 python -m synapse_ai.cli ask "How do we handle on-call incidents?"
 python -m synapse_ai.cli ask "What's the capital of France?"    # falls back to web
@@ -39,16 +41,17 @@ python -m synapse_ai.cli ask "What's the capital of France?"    # falls back to 
 ## Architecture
 
 ```
-                  Orchestrator
-                 /            \
-          Retriever       DecisionClassifier
-         /         \              |
-  VectorStore   BraveSearch    OpenAI
-  (NumPy)        (web)        (LLM)
+                         Orchestrator
+                    /         |         \
+              Retriever   RTSClient   DecisionClassifier
+             /    |    \    (Slack)         |
+      VectorStore Brave  GitHub          OpenAI
+       (NumPy)   (web)  (code)           (LLM)
 ```
 
 - **Vector store**: pure NumPy, no Rust deps. Persisted as `index.json` + `vectors.npy`.
-- **Routing**: confidence ≥0.70 → vector only; ≥0.35 → vector + web; else → web only.
+- **Routing**: confidence ≥0.70 → vector only; ≥0.35 → vector + RTS + web + GitHub; else → RTS + web + GitHub only.
+- **All fallback sources** (RTS, Brave, GitHub) are resilient to failure: an exception or empty response from one does not affect the others.
 - **Decision detection**: analyses transcripts via LLM JSON extraction.
 
 ## Project structure
@@ -61,7 +64,7 @@ src/synapse_ai/
 ├── agent/
 │   ├── orchestrator.py     # Orchestrator, AnswerResult, Source
 │   └── decision_classifier.py  # DecisionClassifier, DecisionSignal
-├── config.py               # pydantic-settings
+├── config.py               # pydantic-settings (reads from os.environ)
 └── cli.py                  # seed / ask commands
 tests/
 ├── conftest.py
@@ -73,8 +76,8 @@ tests/
 ## Running tests
 
 ```bash
-pytest                        # 48 fast unit tests
-RUN_LIVE_TESTS=1 pytest       # includes 3 live API calls
+pytest                        # 54 fast unit tests
+RUN_LIVE_TESTS=1 pytest       # + 3 live API calls (requires real API keys)
 ```
 
 ## Notes

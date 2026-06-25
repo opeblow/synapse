@@ -10,6 +10,7 @@ def pytest_configure() -> None:
     os.environ.setdefault("SLACK_BOT_TOKEN", "xoxb-test-bot-token")
     os.environ.setdefault("SLACK_APP_TOKEN", "xapp-test-app-token")
     os.environ.setdefault("SLACK_SIGNING_SECRET", "test-signing-secret")
+
     # ai-ml Settings requires these
     os.environ.setdefault("OPENAI_API_KEY", "sk-test-fake-key")
     os.environ.setdefault("BRAVE_API_KEY", "BS-test-fake-key")

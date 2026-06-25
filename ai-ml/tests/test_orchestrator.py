@@ -298,3 +298,146 @@ def test_github_exception_brave_still_works(monkeypatch):
     assert result.sources[1].url == "https://brave.example.com"
     brave.search.assert_called_once()
     github.search.assert_called_once()
+
+
+# ------------------------------------------------------------------
+# Tests: RTS search integration
+# ------------------------------------------------------------------
+
+
+def test_rts_results_merged_with_brave_and_github(monkeypatch):
+    """RTS results appear alongside Brave and GitHub when all return data."""
+    monkeypatch.setattr(settings, "github_repo", "test/repo")
+    retriever = MagicMock()
+    brave = MagicMock()
+    llm = MagicMock()
+    github = MagicMock()
+    rts = MagicMock()
+    orch = Orchestrator(
+        retriever=retriever,
+        brave_client=brave,
+        openai_client=llm,
+        github_client=github,
+        rts_client=rts,
+    )
+
+    retriever.retrieve.return_value = [_chunk("medium relevant", 0.45)]
+    rts.search.return_value = [
+        Source(
+            title="# general - Alice",
+            url="https://slack.com/archives/C123/p123",
+            snippet="Deploy on Friday",
+        ),
+    ]
+    brave.search.return_value = [
+        SearchResult(
+            title="Brave Hit",
+            url="https://brave.example.com",
+            snippet="Brave snippet",
+        ),
+    ]
+    github.search.return_value = [
+        Source(
+            title="org/repo: file.py",
+            url="https://github.com/org/repo/file.py",
+            snippet="def foo",
+        ),
+    ]
+    llm.complete.return_value = "Answer."
+
+    result = orch.answer("test query")
+
+    assert len(result.sources) == 4  # vector + RTS + Brave + GitHub
+    urls = [s.url for s in result.sources]
+    assert "https://slack.com/archives/C123/p123" in urls
+    assert "https://brave.example.com" in urls
+    assert "https://github.com/org/repo/file.py" in urls
+    rts.search.assert_called_once()
+    brave.search.assert_called_once()
+    github.search.assert_called_once()
+
+
+def test_rts_empty_brave_and_github_still_work(monkeypatch):
+    """When RTS returns nothing, Brave and GitHub results are still included."""
+    monkeypatch.setattr(settings, "github_repo", "test/repo")
+    retriever = MagicMock()
+    brave = MagicMock()
+    llm = MagicMock()
+    github = MagicMock()
+    rts = MagicMock()
+    orch = Orchestrator(
+        retriever=retriever,
+        brave_client=brave,
+        openai_client=llm,
+        github_client=github,
+        rts_client=rts,
+    )
+
+    retriever.retrieve.return_value = [_chunk("medium relevant", 0.45)]
+    rts.search.return_value = []
+    brave.search.return_value = [
+        SearchResult(
+            title="Brave Hit",
+            url="https://brave.example.com",
+            snippet="Brave snippet",
+        ),
+    ]
+    github.search.return_value = [
+        Source(
+            title="org/repo: file.py",
+            url="https://github.com/org/repo/file.py",
+            snippet="def foo",
+        ),
+    ]
+    llm.complete.return_value = "Answer."
+
+    result = orch.answer("test query")
+
+    assert len(result.sources) == 3  # vector + Brave + GitHub
+    assert result.sources[1].url == "https://brave.example.com"
+    rts.search.assert_called_once()
+    brave.search.assert_called_once()
+    github.search.assert_called_once()
+
+
+def test_rts_exception_brave_and_github_still_work(monkeypatch):
+    """When RTS search raises, Brave and GitHub results are still returned."""
+    monkeypatch.setattr(settings, "github_repo", "test/repo")
+    retriever = MagicMock()
+    brave = MagicMock()
+    llm = MagicMock()
+    github = MagicMock()
+    rts = MagicMock()
+    orch = Orchestrator(
+        retriever=retriever,
+        brave_client=brave,
+        openai_client=llm,
+        github_client=github,
+        rts_client=rts,
+    )
+
+    retriever.retrieve.return_value = [_chunk("medium relevant", 0.45)]
+    rts.search.side_effect = Exception("RTS API down")
+    brave.search.return_value = [
+        SearchResult(
+            title="Brave Hit",
+            url="https://brave.example.com",
+            snippet="Brave snippet",
+        ),
+    ]
+    github.search.return_value = [
+        Source(
+            title="org/repo: file.py",
+            url="https://github.com/org/repo/file.py",
+            snippet="def foo",
+        ),
+    ]
+    llm.complete.return_value = "Answer."
+
+    result = orch.answer("test query")
+
+    assert len(result.sources) == 3  # vector + Brave + GitHub, no RTS
+    assert result.sources[1].url == "https://brave.example.com"
+    rts.search.assert_called_once()
+    brave.search.assert_called_once()
+    github.search.assert_called_once()

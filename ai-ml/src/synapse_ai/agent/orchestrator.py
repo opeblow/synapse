@@ -72,6 +72,7 @@ class Orchestrator:
         brave_client: BraveSearchClient | None = None,
         openai_client: OpenAIClient | None = None,
         github_client: Any = None,
+        rts_client: Any = None,
     ) -> None:
         """Initialise with optional pre-configured dependencies."""
         self._retriever = retriever or Retriever()
@@ -79,6 +80,7 @@ class Orchestrator:
         self._llm = openai_client or OpenAIClient()
         self._github = github_client
         self._github_repo = settings.github_repo
+        self._rts = rts_client
 
     # ------------------------------------------------------------------
     # Public API
@@ -100,11 +102,15 @@ class Orchestrator:
         3. If the top chunk scores above **0.35**, also fetch web
            results and merge both sources (medium confidence).
         4. Otherwise fall back to web search only.
-        5. When a ``github_client`` is configured and vector scores are
+        5. When an ``rts_client`` is configured and vector scores are
+           below the high-confidence threshold, search the Slack workspace
+           first (RTS) — it runs before Brave because internal Slack
+           messages are the most directly relevant source.
+        6. When a ``github_client`` is configured and vector scores are
            below the high-confidence threshold, also search GitHub code
            and merge results (after Brave, so a slow/empty GitHub
            response never blocks the primary fallback).
-        6. If no relevant sources are found at all, return a
+        7. If no relevant sources are found at all, return a
            "I don't know" answer (low confidence).
 
         Args:
@@ -181,8 +187,25 @@ class Orchestrator:
                 context_parts.append(f"[{idx}] {title}\n{chunk.text}")
                 idx += 1
 
-        # If vector results are weak, fall back to web search
+        # If vector results are weak, fall back to search
         if best_score < HIGH_CONFIDENCE_THRESHOLD:
+            # RTS — search our own Slack workspace first (most directly relevant)
+            if self._rts is not None:
+                try:
+                    rts_results: list[Source] = self._rts.search(question)
+                except Exception:
+                    logger.warning("RTS search failed, continuing without it")
+                    rts_results = []
+
+                for result in rts_results:
+                    if any(s.url == result.url for s in sources):
+                        continue
+                    sources.append(result)
+                    title = result.title
+                    snippet = result.snippet or "(no snippet)"
+                    context_parts.append(f"[{idx}] {title}\n{snippet}")
+                    idx += 1
+
             try:
                 web_results: list[SearchResult] = self._brave.search(question, count=5)
             except Exception:
