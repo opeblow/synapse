@@ -24,16 +24,26 @@ SAMPLE_SUCCESS = {
     "results": {
         "messages": [
             {
-                "channel_name": "general",
                 "author_name": "Alice",
-                "permalink": "https://slack.com/archives/C123/p123",
+                "author_user_id": "U001",
+                "team_id": "T001",
+                "channel_id": "C123",
+                "channel_name": "general",
+                "message_ts": "1234567890.123456",
                 "content": "Deploy on Friday after CI passes.",
+                "is_author_bot": False,
+                "permalink": "https://slack.com/archives/C123/p123",
             },
             {
-                "channel_name": "dev",
                 "author_name": "Bob",
-                "permalink": "https://slack.com/archives/C456/p456",
+                "author_user_id": "U002",
+                "team_id": "T001",
+                "channel_id": "C456",
+                "channel_name": "dev",
+                "message_ts": "1234567890.654321",
                 "content": "Update the deployment policy.",
+                "is_author_bot": False,
+                "permalink": "https://slack.com/archives/C456/p456",
             },
         ],
         "files": [
@@ -94,6 +104,7 @@ def test_search_success(client):
         title="general - Alice",
         url="https://slack.com/archives/C123/p123",
         snippet="Deploy on Friday after CI passes.",
+        type="slack_thread",
     )
     assert results[1].title == "dev - Bob"
     assert results[2].title == "deploy.pdf"
@@ -234,6 +245,184 @@ def test_timeout_then_recovers_on_retry(client):
 # ------------------------------------------------------------------
 # Live integration test (skipped unless RUN_LIVE_TESTS=1)
 # ------------------------------------------------------------------
+
+
+# ------------------------------------------------------------------
+# Tests: bot-message and near-duplicate filtering
+# ------------------------------------------------------------------
+
+
+def test_filters_out_bot_messages(client):
+    """Messages authored by the bot (matching slack_bot_user_id) are excluded."""
+    bs, mock_httpx = client
+    bs._bot_user_id = "U999"
+    payload = {
+        "ok": True,
+        "results": {
+            "messages": [
+                {
+                    "author_name": "Synapse",
+                    "author_user_id": "U999",
+                    "team_id": "T001",
+                    "channel_id": "C123",
+                    "channel_name": "general",
+                    "message_ts": "1000000000.000001",
+                    "content": "I am a bot reply.",
+                    "is_author_bot": True,
+                    "permalink": "https://slack.com/archives/C123/p123",
+                },
+                {
+                    "author_name": "Alice",
+                    "author_user_id": "U001",
+                    "team_id": "T001",
+                    "channel_id": "C456",
+                    "channel_name": "random",
+                    "message_ts": "1000000000.000002",
+                    "content": "What do you think?",
+                    "is_author_bot": False,
+                    "permalink": "https://slack.com/archives/C456/p456",
+                },
+            ],
+        },
+    }
+    mock_response = MagicMock()
+    mock_response.is_success = True
+    mock_response.status_code = 200
+    mock_response.json.return_value = payload
+    mock_httpx.post.return_value = mock_response
+
+    results = bs.search("question")
+    assert len(results) == 1
+    assert results[0].title == "random - Alice"
+
+
+
+
+
+def test_filters_out_near_duplicate_messages(client):
+    """Messages whose content is near-identical to the query are excluded."""
+    bs, mock_httpx = client
+    payload = {
+        "ok": True,
+        "results": {
+            "messages": [
+                {
+                    "author_name": "Bob",
+                    "author_user_id": "U002",
+                    "team_id": "T001",
+                    "channel_id": "C456",
+                    "channel_name": "dev",
+                    "message_ts": "1000000000.000001",
+                    "content": "What is the deployment policy?",
+                    "is_author_bot": False,
+                    "permalink": "https://slack.com/archives/C456/p456",
+                },
+                {
+                    "author_name": "Alice",
+                    "author_user_id": "U001",
+                    "team_id": "T001",
+                    "channel_id": "C123",
+                    "channel_name": "general",
+                    "message_ts": "1000000000.000002",
+                    "content": "Here is the deployment guide link.",
+                    "is_author_bot": False,
+                    "permalink": "https://slack.com/archives/C123/p123",
+                },
+            ],
+        },
+    }
+    mock_response = MagicMock()
+    mock_response.is_success = True
+    mock_response.status_code = 200
+    mock_response.json.return_value = payload
+    mock_httpx.post.return_value = mock_response
+
+    results = bs.search("What is the deployment policy?")
+    assert len(results) == 1
+    assert results[0].title == "general - Alice"
+
+
+def test_filters_out_near_duplicate_missing_article(client):
+    """Regression: query 'what is deployment policy?' should be filtered
+    against 'What is the deployment policy?' (missing 'the' in the match)."""
+    bs, mock_httpx = client
+    payload = {
+        "ok": True,
+        "results": {
+            "messages": [
+                {
+                    "author_name": "Bob",
+                    "author_user_id": "U002",
+                    "team_id": "T001",
+                    "channel_id": "C456",
+                    "channel_name": "dev",
+                    "message_ts": "1000000000.000001",
+                    "content": "what is deployment policy?",
+                    "is_author_bot": False,
+                    "permalink": "https://slack.com/archives/C456/p456",
+                },
+                {
+                    "author_name": "Alice",
+                    "author_user_id": "U001",
+                    "team_id": "T001",
+                    "channel_id": "C123",
+                    "channel_name": "general",
+                    "message_ts": "1000000000.000002",
+                    "content": "Here is the deployment guide link.",
+                    "is_author_bot": False,
+                    "permalink": "https://slack.com/archives/C123/p123",
+                },
+            ],
+        },
+    }
+    mock_response = MagicMock()
+    mock_response.is_success = True
+    mock_response.status_code = 200
+    mock_response.json.return_value = payload
+    mock_httpx.post.return_value = mock_response
+
+    results = bs.search("What is the deployment policy?")
+    assert len(results) == 1
+    assert results[0].title == "general - Alice"
+
+
+def test_does_not_filter_different_question_with_shared_stopwords(client):
+    """Regression: 'What is the deployment policy?' and 'What is the on-call
+    policy?' differ only in content words (deployment vs on/call) but share
+    grammatical stopwords — must NOT be flagged as near-duplicates.
+
+    Before the stopword-filter fix the overlap was 80 % (4/5 words:
+    what/is/the/policy), which hit the default threshold and incorrectly
+    suppressed the message.
+    """
+    bs, mock_httpx = client
+    payload = {
+        "ok": True,
+        "results": {
+            "messages": [
+                {
+                    "author_name": "Alice",
+                    "author_user_id": "U001",
+                    "team_id": "T001",
+                    "channel_id": "C456",
+                    "channel_name": "dev",
+                    "message_ts": "1000000000.000001",
+                    "content": "What is the on-call policy?",
+                    "is_author_bot": False,
+                    "permalink": "https://slack.com/archives/C456/p456",
+                },
+            ],
+        },
+    }
+    mock_response = MagicMock()
+    mock_response.is_success = True
+    mock_response.status_code = 200
+    mock_response.json.return_value = payload
+    mock_httpx.post.return_value = mock_response
+
+    results = bs.search("What is the deployment policy?")
+    assert len(results) == 1
+    assert results[0].title == "dev - Alice"
 
 
 @pytest.mark.skipif(

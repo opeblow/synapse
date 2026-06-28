@@ -7,6 +7,7 @@ search, or reply "I don't know", and synthesises a cited markdown answer.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,6 +23,8 @@ logger = logging.getLogger(__name__)
 # Similarity thresholds for routing decisions
 HIGH_CONFIDENCE_THRESHOLD = 0.70
 MEDIUM_CONFIDENCE_THRESHOLD = 0.35
+
+MAX_SOURCES = 5
 
 ANSWER_SYSTEM_PROMPT = """\
 You are a helpful assistant. Answer the user's question based on the context \
@@ -41,6 +44,7 @@ class Source:
     title: str
     url: str = ""
     snippet: str = ""
+    type: str = "web"
 
 
 @dataclass
@@ -150,6 +154,7 @@ class Orchestrator:
         # Synthesise answer from context
         confidence = self._confidence_label(best_score, bool(vector_chunks))
         answer = self._synthesise(question, context_text, **llm_kwargs)
+        answer, sources = self._filter_cited_sources(answer, sources)
         signal = self._detect_decision(conversation_transcript)
 
         return AnswerResult(
@@ -172,20 +177,36 @@ class Orchestrator:
     ) -> tuple[list[Source], str]:
         """Collect sources and build a context string.
 
+        Sources are deduplicated by (title, url) across all providers.
+        Total sources are capped at ``MAX_SOURCES`` (5), with
+        vector-store hits prioritised first.
+
         Returns ``(sources, context_text)``. Returns ``([], "")`` when
         no sources are found.
         """
         sources: list[Source] = []
         context_parts: list[str] = []
+        seen: set[tuple[str, str]] = set()
         idx = 1
+
+        def _push(source: Source) -> None:
+            nonlocal idx
+            key = (source.title.strip().lower(), source.url)
+            if key in seen:
+                return
+            seen.add(key)
+            sources.append(source)
+            snippet = source.snippet or "(no snippet)"
+            context_parts.append(f"[{idx}] {source.title}\n{snippet}")
+            idx += 1
 
         if best_score >= MEDIUM_CONFIDENCE_THRESHOLD:
             for chunk in vector_chunks:
+                if len(sources) >= MAX_SOURCES:
+                    break
                 title = chunk.metadata.get("title", chunk.metadata.get("source", "Untitled"))
                 url = chunk.metadata.get("url", "")
-                sources.append(Source(title=title, url=url, snippet=chunk.text))
-                context_parts.append(f"[{idx}] {title}\n{chunk.text}")
-                idx += 1
+                _push(Source(title=title, url=url, snippet=chunk.text, type="web"))
 
         # If vector results are weak, fall back to search
         if best_score < HIGH_CONFIDENCE_THRESHOLD:
@@ -198,13 +219,9 @@ class Orchestrator:
                     rts_results = []
 
                 for result in rts_results:
-                    if any(s.url == result.url for s in sources):
-                        continue
-                    sources.append(result)
-                    title = result.title
-                    snippet = result.snippet or "(no snippet)"
-                    context_parts.append(f"[{idx}] {title}\n{snippet}")
-                    idx += 1
+                    if len(sources) >= MAX_SOURCES:
+                        break
+                    _push(result)
 
             try:
                 web_results: list[SearchResult] = self._brave.search(question, count=5)
@@ -213,12 +230,9 @@ class Orchestrator:
                 web_results = []
 
             for result in web_results:
-                # Avoid duplicates
-                if any(s.url == result.url for s in sources):
-                    continue
-                sources.append(Source(title=result.title, url=result.url, snippet=result.snippet))
-                context_parts.append(f"[{idx}] {result.title} ({result.url})\n{result.snippet}")
-                idx += 1
+                if len(sources) >= MAX_SOURCES:
+                    break
+                _push(Source(title=result.title, url=result.url, snippet=result.snippet, type="web"))
 
             # Supplement with GitHub code search (after Brave so it never blocks)
             if self._github is not None and self._github_repo:
@@ -231,13 +245,9 @@ class Orchestrator:
                     gh_results = []
 
                 for result in gh_results:
-                    if any(s.url == result.url for s in sources):
-                        continue
-                    sources.append(result)
-                    title = result.title
-                    snippet = result.snippet or "(no snippet)"
-                    context_parts.append(f"[{idx}] {title}\n{snippet}")
-                    idx += 1
+                    if len(sources) >= MAX_SOURCES:
+                        break
+                    _push(result)
 
         if not sources:
             return [], ""
@@ -254,6 +264,44 @@ class Orchestrator:
             },
         ]
         return self._llm.complete(messages, **llm_kwargs)
+
+    @staticmethod
+    def _filter_cited_sources(answer: str, sources: list[Source]) -> tuple[str, list[Source]]:
+        """Keep only sources actually cited in the answer, and renumber citations.
+
+        Parses ``[N]`` markers in the answer text, builds a mapping from old
+        index to new sequential index, rewrites the answer, and drops uncited
+        sources.  If no citation markers are found, returns everything unchanged
+        (fail-safe).  If a cited index is out of range it is silently dropped.
+        """
+        if not sources:
+            return answer, sources
+
+        cited: set[int] = set()
+        for m in re.finditer(r"\[(\d+)\]", answer):
+            cited.add(int(m.group(1)))
+
+        if not cited:
+            return answer, sources
+
+        old_to_new: dict[int, int] = {}
+        new_idx = 1
+        for old in sorted(cited):
+            if 1 <= old <= len(sources):
+                old_to_new[old] = new_idx
+                new_idx += 1
+
+        if not old_to_new:
+            return answer, sources
+
+        def _replace(m: re.Match) -> str:
+            old = int(m.group(1))
+            n = old_to_new.get(old)
+            return f"[{n}]" if n is not None else m.group(0)
+
+        answer = re.sub(r"\[(\d+)\]", _replace, answer)
+        sources = [s for i, s in enumerate(sources, 1) if i in old_to_new]
+        return answer, sources
 
     def _detect_decision(self, transcript: str | None) -> DecisionSignal | None:
         """Optionally run decision detection on a conversation transcript."""

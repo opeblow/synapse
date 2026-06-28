@@ -198,7 +198,7 @@ class GitHubMCPClient:
 
             display_title = f"{repo_name}: {path}" if repo_name else name
             results.append(
-                Source(title=display_title, url=html_url, snippet=snippet)
+                Source(title=display_title, url=html_url, snippet=snippet, type="github")
             )
 
         return results

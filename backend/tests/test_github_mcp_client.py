@@ -79,6 +79,7 @@ def test_search_success(client):
         title="org/repo: docs/deploy.md",
         url="https://github.com/org/repo/blob/main/docs/deploy.md",
         snippet="Deploy on Friday after CI passes.",
+        type="github",
     )
     assert results[1].title == "org/repo: README.md"
     assert results[1].snippet == "Welcome to the deployment guide."

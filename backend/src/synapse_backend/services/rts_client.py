@@ -20,6 +20,57 @@ from synapse_ai.agent.orchestrator import Source
 from synapse_backend.config import Settings
 from synapse_backend.config import settings as _default_settings
 
+
+_STOPWORDS = frozenset(
+    {
+        "a", "an", "the",
+        "is", "are", "was", "were", "be", "been", "being",
+        "it", "its",
+        "and", "or", "but",
+    }
+)
+
+
+def _normalize(s: str) -> str:
+    """Lowercase, strip punctuation, collapse whitespace."""
+    import re
+
+    return re.sub(r"[^\w\s]", "", s).lower().strip()
+
+
+def _is_near_duplicate(text: str, query: str) -> bool:
+    t = _normalize(text)
+    q = _normalize(query)
+    if not t or not q:
+        return False
+    # Exact match after normalisation
+    if t == q:
+        return True
+    # Word-set overlap on non-stopword tokens.
+    #
+    # Stopwords (articles, auxiliary verbs, conjunctions) are excluded
+    # first so that questions like "What is the deployment policy?" and
+    # "What is the on-call policy?" aren't falsely conflated — without
+    # this filter they share 4/5 words (what/is/the/policy) even though
+    # the actual content words differ (deployment vs on/call).
+    t_words = [w for w in t.split() if w not in _STOPWORDS]
+    q_words = [w for w in q.split() if w not in _STOPWORDS]
+    shorter_words, longer_words = (
+        (t_words, q_words) if len(t_words) <= len(q_words) else (q_words, t_words)
+    )
+    if len(shorter_words) < 2:
+        return False
+    shorter_set = set(shorter_words)
+    longer_set = set(longer_words)
+    # For very short word lists (< 3) require exact content-word match;
+    # for longer lists use the 80 % overlap threshold.  This prevents a
+    # 2-word query like "deployment policy" from being absorbed by a
+    # longer message like "Update the deployment policy" (100 % overlap
+    # on the query's words, yet clearly a different intent).
+    if len(shorter_words) < 3:
+        return shorter_set == longer_set
+    return len(shorter_set & longer_set) / len(shorter_set) >= 0.8
+
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://slack.com/api/assistant.search.context"
@@ -77,6 +128,7 @@ class RTSClient:
         self._token = cfg.slack_user_token
         self._timeout = timeout
         self._max_retries = max_retries
+        self._bot_user_id = cfg.slack_bot_user_id
         self._client = httpx.Client(timeout=self._timeout)
 
     # ------------------------------------------------------------------
@@ -142,7 +194,7 @@ class RTSClient:
                 logger.warning(msg)
                 raise RTSSearchHTTPError(msg)
 
-            return self._parse_response(response.json())
+            return self._parse_response(response.json(), query, self._bot_user_id)
 
         if isinstance(last_exc, httpx.TimeoutException):
             raise RTSSearchTimeoutError(
@@ -165,7 +217,11 @@ class RTSClient:
         return headers
 
     @staticmethod
-    def _parse_response(data: dict[str, Any]) -> list[Source]:
+    def _parse_response(
+        data: dict[str, Any],
+        query: str = "",
+        bot_user_id: str = "",
+    ) -> list[Source]:
         if not data.get("ok"):
             error = data.get("error", "unknown_error")
             logger.warning("Slack API returned ok=false: %s", error)
@@ -181,12 +237,23 @@ class RTSClient:
         for item in results.get("messages", []):
             if not isinstance(item, dict):
                 continue
+
+            # Filter out messages authored by the bot itself
+            author_id = item.get("author_user_id", "")
+            if bot_user_id and author_id == bot_user_id:
+                continue
+
+            content = item.get("content", "")
+            # Filter out messages whose text is near-identical to the query
+            if query and _is_near_duplicate(content, query):
+                continue
+
             channel_name = item.get("channel_name", "")
             author_name = item.get("author_name", "")
             title = f"{channel_name} - {author_name}".strip(" -")
             url = item.get("permalink", "")
-            snippet = item.get("content", "")
-            sources.append(Source(title=title, url=url, snippet=snippet))
+            snippet = content
+            sources.append(Source(title=title, url=url, snippet=snippet, type="slack_thread"))
 
         for item in results.get("files", []):
             if not isinstance(item, dict):
@@ -194,7 +261,7 @@ class RTSClient:
             title = item.get("name", item.get("title", ""))
             url = item.get("permalink", "")
             snippet = item.get("title", "")
-            sources.append(Source(title=title, url=url, snippet=snippet))
+            sources.append(Source(title=title, url=url, snippet=snippet, type="slack_thread"))
 
         for item in results.get("channels", []):
             if not isinstance(item, dict):
@@ -205,7 +272,7 @@ class RTSClient:
                 snippet = raw_purpose.get("value", "")
             else:
                 snippet = str(raw_purpose) if raw_purpose else ""
-            sources.append(Source(title=f"# {channel_name}", url="", snippet=snippet))
+            sources.append(Source(title=f"# {channel_name}", url="", snippet=snippet, type="slack_thread"))
 
         for item in results.get("users", []):
             if not isinstance(item, dict):
@@ -215,7 +282,7 @@ class RTSClient:
             name = item.get("name", "")
             title = real_name or display_name or name
             snippet = item.get("title", "")
-            sources.append(Source(title=title, url="", snippet=snippet))
+            sources.append(Source(title=title, url="", snippet=snippet, type="slack_thread"))
 
         return sources
 

@@ -16,11 +16,10 @@ import logging
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from synapse_ai.agent.orchestrator import AnswerResult, Orchestrator
+from synapse_ai.agent.orchestrator import AnswerResult
 
 from synapse_backend.config import settings
-from synapse_backend.services.github_mcp_client import GitHubMCPClient
-from synapse_backend.services.rts_client import RTSClient
+from synapse_backend.orchestrator import get_orchestrator
 from synapse_backend.views import answer_message_view, decision_card_view
 
 logger = logging.getLogger(__name__)
@@ -29,19 +28,6 @@ app = App(token=settings.slack_bot_token, signing_secret=settings.slack_signing_
 
 # Lazy: resolved inside start() so tests can import the module without a live Slack API call
 _bot_user_id_resolved = False
-
-# Lazy orchestrator so tests / env lacking AI keys don't fail on import
-_orchestrator: Orchestrator | None = None
-
-
-def _get_orchestrator() -> Orchestrator:
-    global _orchestrator
-    if _orchestrator is None:
-        _orchestrator = Orchestrator(
-            github_client=GitHubMCPClient() if settings.github_token else None,
-            rts_client=RTSClient() if settings.slack_user_token else None,
-        )
-    return _orchestrator
 
 
 def _post_decision_card_if_needed(result: AnswerResult, question: str) -> None:
@@ -75,7 +61,7 @@ def handle_message(event: dict, say) -> None:
     logger.info("Received DM: %s", text)
 
     try:
-        result = _get_orchestrator().answer(text, conversation_transcript=text)
+        result = get_orchestrator().answer(text, conversation_transcript=text)
         say(blocks=answer_message_view(result), text=result.answer_markdown)
         _post_decision_card_if_needed(result, text)
     except Exception:
@@ -92,7 +78,7 @@ def handle_mention(event: dict, say) -> None:
     logger.info("Received mention: %s", text)
 
     try:
-        result = _get_orchestrator().answer(text, conversation_transcript=text)
+        result = get_orchestrator().answer(text, conversation_transcript=text)
         say(blocks=answer_message_view(result), text=result.answer_markdown)
         _post_decision_card_if_needed(result, text)
     except Exception:

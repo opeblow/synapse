@@ -41,6 +41,8 @@ class Settings(BaseSettings):
         description="GitHub personal access token for repository search",
     )
 
+    api_port: int = Field(default=8000, description="Port for the FastAPI /internal/answer server")
+
     log_level: str = Field(default="INFO", description="Logging level (DEBUG, INFO, WARNING, etc.)")
 
 

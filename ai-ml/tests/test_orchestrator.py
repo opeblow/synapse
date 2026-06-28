@@ -191,26 +191,84 @@ def test_decision_detection_no_transcript(mock_components):
 # ------------------------------------------------------------------
 
 
-def test_sources_deduplicated_by_url(mock_components):
-    """When the same URL appears in vector metadata and web results, deduplicate."""
+def test_sources_deduplicated_by_title_url(mock_components):
+    """Sources with the same (title, url) pair across providers are deduplicated."""
     orch, retriever, brave, llm, _ = mock_components
     retriever.retrieve.return_value = [
         _chunk(
             "Internal doc",
             0.50,
-            {"source": "internal", "url": "https://example.com/doc"},
+            {"title": "My Doc", "url": "https://example.com/doc"},
         ),
     ]
     brave.search.return_value = [
-        SearchResult(title="Web copy", url="https://example.com/doc", snippet="Same doc"),
+        SearchResult(title="My Doc", url="https://example.com/doc", snippet="Same doc"),
     ]
     llm.complete.return_value = "Answer."
 
     result = orch.answer("question")
 
-    # Only one source for the duplicate URL
-    urls = [s.url for s in result.sources]
-    assert urls.count("https://example.com/doc") == 1
+    # Only one source for the duplicate (title, url) pair
+    assert len(result.sources) == 1
+
+    # Same url but different title should NOT be deduplicated
+    retriever.retrieve.return_value = [
+        _chunk(
+            "Internal doc",
+            0.50,
+            {"title": "Doc A", "url": "https://example.com/doc"},
+        ),
+    ]
+    brave.search.return_value = [
+        SearchResult(title="Doc B", url="https://example.com/doc", snippet="Different title"),
+    ]
+    result = orch.answer("question")
+    assert len(result.sources) == 2
+
+
+# ------------------------------------------------------------------
+# Tests: source cap (MAX_SOURCES = 5)
+# ------------------------------------------------------------------
+
+
+def test_sources_capped_at_max(mock_components):
+    """Total sources returned is capped at MAX_SOURCES (5)."""
+    orch, retriever, brave, llm, _ = mock_components
+    retriever.retrieve.return_value = [
+        _chunk(f"Chunk {i}", 0.50, {"title": f"Doc {i}", "url": f"https://example.com/{i}"})
+        for i in range(3)
+    ]
+    brave.search.return_value = [
+        SearchResult(title=f"Brave {i}", url=f"https://brave.example.com/{i}", snippet=f"Web {i}")
+        for i in range(5)
+    ]
+    llm.complete.return_value = "Answer."
+
+    result = orch.answer("question")
+    assert len(result.sources) <= 5
+
+
+# ------------------------------------------------------------------
+# Tests: source type field
+# ------------------------------------------------------------------
+
+
+def test_source_types_are_set_correctly(mock_components):
+    """Each provider's sources carry their respective type label."""
+    orch, retriever, brave, llm, _ = mock_components
+    retriever.retrieve.return_value = [
+        _chunk("Vector doc", 0.50, {"title": "Vector Doc", "url": "https://example.com/vec"}),
+    ]
+    brave.search.return_value = [
+        SearchResult(title="Brave Hit", url="https://brave.example.com", snippet="web result"),
+    ]
+    llm.complete.return_value = "Answer."
+
+    result = orch.answer("question")
+    # Vector-store sources should have type="web"
+    assert result.sources[0].type == "web"
+    # Brave sources should have type="web"
+    assert result.sources[1].type == "web"
 
 
 # ------------------------------------------------------------------
@@ -234,7 +292,7 @@ def test_github_results_merged_with_brave(monkeypatch):
         SearchResult(title="Brave Hit", url="https://brave.example.com", snippet="Brave snippet"),
     ]
     github.search.return_value = [
-        Source(title="org/repo: file.py", url="https://github.com/org/repo/file.py", snippet="def foo"),
+        Source(title="org/repo: file.py", url="https://github.com/org/repo/file.py", snippet="def foo", type="github"),
     ]
     llm.complete.return_value = "Answer."
 
@@ -327,6 +385,7 @@ def test_rts_results_merged_with_brave_and_github(monkeypatch):
             title="# general - Alice",
             url="https://slack.com/archives/C123/p123",
             snippet="Deploy on Friday",
+            type="slack_thread",
         ),
     ]
     brave.search.return_value = [
@@ -341,6 +400,7 @@ def test_rts_results_merged_with_brave_and_github(monkeypatch):
             title="org/repo: file.py",
             url="https://github.com/org/repo/file.py",
             snippet="def foo",
+            type="github",
         ),
     ]
     llm.complete.return_value = "Answer."
@@ -387,6 +447,7 @@ def test_rts_empty_brave_and_github_still_work(monkeypatch):
             title="org/repo: file.py",
             url="https://github.com/org/repo/file.py",
             snippet="def foo",
+            type="github",
         ),
     ]
     llm.complete.return_value = "Answer."
@@ -430,6 +491,7 @@ def test_rts_exception_brave_and_github_still_work(monkeypatch):
             title="org/repo: file.py",
             url="https://github.com/org/repo/file.py",
             snippet="def foo",
+            type="github",
         ),
     ]
     llm.complete.return_value = "Answer."
@@ -441,3 +503,43 @@ def test_rts_exception_brave_and_github_still_work(monkeypatch):
     rts.search.assert_called_once()
     brave.search.assert_called_once()
     github.search.assert_called_once()
+
+
+# ------------------------------------------------------------------
+# Tests: citation filtering
+# ------------------------------------------------------------------
+
+
+def test_citation_filtering_partial_citations(mock_components):
+    """Only sources cited in the answer are kept; others dropped; citations renumbered."""
+    orch, retriever, brave, llm, _ = mock_components
+    retriever.retrieve.return_value = [
+        _chunk("Source A content", 0.92, {"source": "doc_a.md"}),
+        _chunk("Source B content", 0.85, {"source": "doc_b.md"}),
+        _chunk("Source C content", 0.80, {"source": "doc_c.md"}),
+    ]
+    llm.complete.return_value = "According to [1] and [3], the answer is yes."
+
+    result = orch.answer("test")
+
+    assert len(result.sources) == 2
+    assert result.sources[0].title == "doc_a.md"
+    assert result.sources[1].title == "doc_c.md"
+    assert result.answer_markdown == "According to [1] and [2], the answer is yes."
+
+
+def test_citation_filtering_no_citations(mock_components):
+    """When no citation markers are found, all sources are returned unchanged (fail-safe)."""
+    orch, retriever, brave, llm, _ = mock_components
+    retriever.retrieve.return_value = [
+        _chunk("Source A content", 0.92, {"source": "doc_a.md"}),
+        _chunk("Source B content", 0.85, {"source": "doc_b.md"}),
+    ]
+    llm.complete.return_value = "The answer is clear."
+
+    result = orch.answer("test")
+
+    assert len(result.sources) == 2
+    assert result.sources[0].title == "doc_a.md"
+    assert result.sources[1].title == "doc_b.md"
+    assert result.answer_markdown == "The answer is clear."
