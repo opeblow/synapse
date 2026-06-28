@@ -71,7 +71,79 @@ black src/ tests/
 ruff check src/ tests/
 ```
 
-## Notes for the frontend teammate
+## Deployment (Render)
+
+Two separate **Web Services** (standard tier, not Background Worker — both
+are HTTP-aware and pass Render's health check).
+
+### Root Directory
+
+For both services, set Render's **Root Directory** to the repository root
+(not `backend/`), so the monorepo's sibling `ai-ml` package can be resolved
+during the build:
+
+```
+Root Directory:  (leave as repo root /  `./`)
+```
+
+### Build Command (shared)
+
+```bash
+pip install -e ai-ml && pip install -e backend
+```
+
+Editable installs (`-e`) are fine here because Render builds from a single
+checkout and runs the same venv at runtime.
+
+### Start Commands
+
+| Service | Start Command |
+|---|---|
+| **Bot** (Socket Mode + health) | `python -m synapse_backend.app` |
+| **API** (FastAPI) | `python -m synapse_backend.api` |
+
+Both processes read `$PORT` from Render's environment. The bot runs its
+health HTTP server on that port; the API passes it to uvicorn.
+
+### Health Checks
+
+Both services expose `GET /health` → `{"status": "ok"}`. Render will probe
+this automatically once the start command binds the port.
+
+### Required Environment Variables
+
+#### Shared (set on **both** services)
+
+| Variable | Required | Description |
+|---|---|---|
+| `OPENAI_API_KEY` | Yes | OpenAI API key for embeddings and chat |
+| `BRAVE_API_KEY` | Yes | Brave Search API key for web fallback |
+| `GITHUB_TOKEN` | No | GitHub PAT for code search |
+| `GITHUB_REPO` | No | `owner/repo` (e.g. `opeblow/synapse`) |
+| `SLACK_USER_TOKEN` | No | Slack user token (`xoxp-...`) for RTS search |
+| `LOG_LEVEL` | No | `DEBUG`, `INFO` (default), `WARNING`, etc. |
+
+#### Bot service only
+
+| Variable | Required | Description |
+|---|---|---|
+| `SLACK_BOT_TOKEN` | Yes | Bot User OAuth token (`xoxb-...`) |
+| `SLACK_APP_TOKEN` | Yes | App-Level token for Socket Mode (`xapp-...`) |
+| `SLACK_SIGNING_SECRET` | Yes | Signing secret from Slack app credentials |
+| `SLACK_DECISIONS_CHANNEL_ID` | No | Channel ID for Decision Cards |
+
+#### API service only
+
+*(No unique env vars — it uses the shared set above.)*
+
+### Vector store seeding
+
+On first boot, if the local vector store is empty, both processes
+automatically seed it from `ai-ml/tests/fixtures/sample_docs.json`. No
+manual `seed` command or committed binary data needed. The check is
+lightweight (runs once at startup, skipped if docs already exist).
+
+### Notes for the frontend teammate
 
 Block Kit views live under `views/` and are pure functions: typed data in,
 Block Kit dict out, no business logic. Replace the internals without changing

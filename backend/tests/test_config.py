@@ -41,20 +41,22 @@ class TestSettingsFromEnv:
         assert s.slack_bot_user_id == "U12345"
 
 
-class TestSettingsValidation:
-    """Verify that missing required fields raise."""
+class TestSettingsOptional:
+    """Slack tokens are now optional (empty default) so the API service
+    can boot without them.  The bot service will fail at connection time
+    if they are missing."""
 
-    def test_missing_bot_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_missing_bot_token_defaults_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
-        with pytest.raises(ValueError, match="slack_bot_token"):
-            Settings(_env_file=None)
+        s = Settings(_env_file=None)
+        assert s.slack_bot_token == ""
 
-    def test_missing_app_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_missing_app_token_defaults_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("SLACK_APP_TOKEN", raising=False)
-        with pytest.raises(ValueError, match="slack_app_token"):
-            Settings(_env_file=None)
+        s = Settings(_env_file=None)
+        assert s.slack_app_token == ""
 
-    def test_missing_signing_secret_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_missing_signing_secret_defaults_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("SLACK_SIGNING_SECRET", raising=False)
-        with pytest.raises(ValueError, match="slack_signing_secret"):
-            Settings(_env_file=None)
+        s = Settings(_env_file=None)
+        assert s.slack_signing_secret == ""

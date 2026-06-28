@@ -21,11 +21,11 @@ class Settings(BaseSettings):
         env_prefix="",
     )
 
-    slack_bot_token: str = Field(min_length=1, description="Bot User OAuth token (xoxb-...)")
+    slack_bot_token: str = Field(default="", description="Bot User OAuth token (xoxb-...) — required for bot service")
     slack_app_token: str = Field(
-        min_length=1, description="App-Level token for Socket Mode (xapp-...)"
+        default="", description="App-Level token for Socket Mode (xapp-...) — required for bot service"
     )
-    slack_signing_secret: str = Field(min_length=1, description="Signing secret from Basic Information")
+    slack_signing_secret: str = Field(default="", description="Signing secret — required for bot service")
 
     slack_bot_user_id: str = Field(default="", description="Bot user ID, populated after startup")
 

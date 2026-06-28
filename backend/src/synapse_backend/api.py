@@ -12,6 +12,7 @@ Or::
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,7 @@ from pydantic import BaseModel
 from uvicorn import run
 
 from synapse_backend.config import settings
-from synapse_backend.orchestrator import get_orchestrator
+from synapse_backend.orchestrator import ensure_vector_store_seeded, get_orchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +112,12 @@ def start() -> None:
         level=settings.log_level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    logger.info("Starting Synapse API server on port %s ...", settings.api_port)
-    run("synapse_backend.api:app", host="0.0.0.0", port=settings.api_port, reload=False)
+
+    ensure_vector_store_seeded()
+
+    port = int(os.environ.get("PORT", settings.api_port))
+    logger.info("Starting Synapse API server on port %s ...", port)
+    run("synapse_backend.api:app", host="0.0.0.0", port=port, reload=False)
 
 
 if __name__ == "__main__":
