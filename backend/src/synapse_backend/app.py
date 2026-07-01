@@ -24,7 +24,7 @@ from synapse_ai.agent.orchestrator import AnswerResult
 
 from synapse_backend.config import settings
 from synapse_backend.orchestrator import ensure_vector_store_seeded, get_orchestrator
-from synapse_backend.views import answer_message_view, decision_card_view
+from synapse_backend.views import answer_message_view, app_home_view, ask_modal_view, decision_card_view
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,15 @@ def _post_decision_card_if_needed(app: App, result: AnswerResult, question: str)
         fallback = signal.summary or "Decision detected"
         app.client.chat_postMessage(
             channel=channel,
-            blocks=decision_card_view(signal, question),
+            blocks=decision_card_view(
+                signal, question,
+                body=getattr(signal, 'body', ''),
+                decided_by=settings.slack_bot_user_id or '',
+                channel=channel,
+                date='',
+                decision_id=str(id(signal)),
+                thread_url='',
+            ),
             text=fallback,
         )
     except Exception:
@@ -113,6 +121,93 @@ def _build_app() -> App:
             logger.exception("Failed to answer question")
             say("Sorry, I encountered an error while processing your question.")
 
+    @app.event("app_home_opened")
+    def handle_app_home_opened(event: dict, client) -> None:
+        user_id = event.get("user", "")
+        if not user_id:
+            return
+        try:
+            client.views_publish(
+                user_id=user_id,
+                view={"type": "home", "blocks": app_home_view(first_run=True)},
+            )
+        except Exception:
+            logger.exception("Failed to publish App Home")
+
+    @app.command("/ask")
+    def handle_ask_command(ack, body, client) -> None:
+        ack()
+        try:
+            client.views_open(trigger_id=body["trigger_id"], view=ask_modal_view())
+        except Exception:
+            logger.exception("Failed to open ask modal from slash command")
+
+    @app.action("open_ask_modal")
+    def handle_open_ask_modal(ack, body, client) -> None:
+        ack()
+        try:
+            client.views_open(trigger_id=body["trigger_id"], view=ask_modal_view())
+        except Exception:
+            logger.exception("Failed to open ask modal from action")
+
+    @app.view("ask_modal_submit")
+    def handle_ask_modal_submit(ack, view, body, client) -> None:
+        ack()
+        try:
+            question = view["state"]["values"]["question_block"]["question_input"]["value"]
+            dm = client.conversations_open(users=body["user"]["id"])
+            result = get_orchestrator().answer(question, conversation_transcript=question)
+            client.chat_postMessage(
+                channel=dm["channel"]["id"],
+                text=result.answer_markdown,
+                blocks=answer_message_view(result),
+            )
+            _post_decision_card_if_needed(app, result, question)
+        except Exception:
+            logger.exception("Failed to process ask modal submission")
+
+    @app.action("view_source")
+    def handle_view_source(ack) -> None:
+        ack()
+
+    @app.action("view_thread")
+    def handle_view_thread(ack) -> None:
+        ack()
+
+    @app.action("confirm_decision")
+    def handle_confirm_decision(ack, body, client) -> None:
+        ack()
+        try:
+            kept = [b for b in body["message"]["blocks"] if b.get("type") != "actions"]
+            client.chat_update(
+                channel=body["channel"]["id"],
+                ts=body["message"]["ts"],
+                text=":white_check_mark: Confirmed",
+                blocks=[
+                    *kept,
+                    {"type": "context", "elements": [{"type": "mrkdwn", "text": f":white_check_mark: Confirmed by <@{body['user']['id']}>"}]},
+                ],
+            )
+        except Exception:
+            logger.exception("Failed to confirm decision")
+
+    @app.action("dispute_decision")
+    def handle_dispute_decision(ack, body, client) -> None:
+        ack()
+        try:
+            kept = [b for b in body["message"]["blocks"] if b.get("type") != "actions"]
+            client.chat_update(
+                channel=body["channel"]["id"],
+                ts=body["message"]["ts"],
+                text=":no_entry: Disputed",
+                blocks=[
+                    *kept,
+                    {"type": "context", "elements": [{"type": "mrkdwn", "text": f":no_entry: Disputed by <@{body['user']['id']}>"}]},
+                ],
+            )
+        except Exception:
+            logger.exception("Failed to dispute decision")
+
     return app
 
 
@@ -150,18 +245,18 @@ def start() -> None:
         except Exception:
             logger.warning("Could not resolve bot user ID at startup")
 
-    # Run Socket Mode in a background daemon thread
-    handler = SocketModeHandler(app, settings.slack_app_token)
-    socket_thread = threading.Thread(target=handler.start, daemon=True, name="socket-mode")
-    socket_thread.start()
-    logger.info("Socket Mode handler started in background thread")
-
-    # Health HTTP server in the main thread (what Render probes)
+    # Health HTTP server in a background daemon thread (Render probes this)
     port = int(os.environ.get("PORT", "8080"))
     server = HTTPServer(("0.0.0.0", port), _HealthHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True, name="health-server")
+    server_thread.start()
     logger.info("Health server listening on 0.0.0.0:%s", port)
+
+    # Socket Mode in the main thread (signal.signal() only works in main thread)
+    handler = SocketModeHandler(app, settings.slack_app_token)
+    logger.info("Starting Socket Mode handler in main thread ...")
     try:
-        server.serve_forever()
+        handler.start()
     except KeyboardInterrupt:
         logger.info("Shutting down ...")
         server.shutdown()
